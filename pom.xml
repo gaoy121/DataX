@@ -80,6 +80,7 @@
         <module>loghubreader</module>
         <module>datahubreader</module>
         <module>starrocksreader</module>
+        <module>elasticsearchreader</module>
 
         <!-- writer -->
         <module>mysqlwriter</module>
