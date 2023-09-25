@@ -1,0 +1,22 @@
+{
+  "name":"elasticsearchreader",
+  "parameter":{
+    "endpoint":"",
+    "accessId":"",
+    "accessKey":"",
+    "index":"",
+    "type":"",
+    "searchType":"",
+    "headers":{},
+    "scroll":"",
+    "search":[
+      {}
+    ],
+    "table":{
+      "name":"",
+      "filter":"",
+      "nameCase":"",
+      "column":[]
+    }
+  }
+}
