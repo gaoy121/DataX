@@ -26,7 +26,8 @@ public enum DataBaseType {
     OceanBase("oceanbase", "com.alipay.oceanbase.jdbc.Driver"),
     StarRocks("starrocks", "com.mysql.jdbc.Driver"),
     GaussDB("gaussdb", "org.opengauss.Driver"),
-    Databend("databend", "com.databend.jdbc.DatabendDriver");
+    Databend("databend", "com.databend.jdbc.DatabendDriver"),
+    MatrixOne("matrixone", "com.mysql.cj.jdbc.Driver");
 
     private String typeName;
     private String driverClassName;
@@ -136,6 +137,14 @@ public enum DataBaseType {
                 }
                 break;
             case GaussDB:
+                break;
+            case MatrixOne:
+                suffix = "enabledTLSProtocols=TLSv1.2";
+                if (jdbc.contains("?")) {
+                    result = jdbc + "&" + suffix;
+                } else {
+                    result = jdbc + "?" + suffix;
+                }
                 break;
             default:
                 throw DataXException.asDataXException(DBUtilErrorCode.UNSUPPORTED_TYPE, "unsupported database type.");
