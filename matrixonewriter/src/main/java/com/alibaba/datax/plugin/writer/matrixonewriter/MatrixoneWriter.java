@@ -1,12 +1,19 @@
 package com.alibaba.datax.plugin.writer.matrixonewriter;
 
+import com.alibaba.datax.common.element.Record;
+import com.alibaba.datax.common.exception.DataXException;
 import com.alibaba.datax.common.plugin.RecordReceiver;
 import com.alibaba.datax.common.spi.Writer;
 import com.alibaba.datax.common.util.Configuration;
+import com.alibaba.datax.plugin.rdbms.util.DBUtil;
+import com.alibaba.datax.plugin.rdbms.util.DBUtilErrorCode;
 import com.alibaba.datax.plugin.rdbms.util.DataBaseType;
-import com.alibaba.datax.plugin.rdbms.writer.CommonRdbmsWriter;
-import com.alibaba.datax.plugin.rdbms.writer.Key;
+import com.alibaba.datax.plugin.writer.matrixonewriter.manager.MatrixOneWriterManager;
+import com.alibaba.datax.plugin.writer.matrixonewriter.util.RecordSerializerUtil;
+import com.alibaba.datax.plugin.writer.matrixonewriter.util.MatrixOneWriterUtil;
 
+import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.List;
 
 
@@ -16,83 +23,111 @@ public class MatrixoneWriter extends Writer {
 
     public static class Job extends Writer.Job {
         private Configuration originalConfig = null;
-        private CommonRdbmsWriter.Job commonRdbmsWriterJob;
+        private MatrixoneWriterOptions options;
 
         @Override
         public void preCheck(){
             this.init();
-            this.commonRdbmsWriterJob.writerPreCheck(this.originalConfig, DATABASE_TYPE);
+            this.options.doPretreatment();
+            MatrixOneWriterUtil.checkPreSQL(this.options);
+            MatrixOneWriterUtil.checkPostSQL(this.options);
         }
 
         @Override
         public void init() {
             this.originalConfig = super.getPluginJobConf();
-            this.commonRdbmsWriterJob = new CommonRdbmsWriter.Job(DATABASE_TYPE);
-            this.commonRdbmsWriterJob.init(this.originalConfig);
+            this.options = new MatrixoneWriterOptions(this.originalConfig);
         }
 
         // 一般来说，是需要推迟到 task 中进行pre 的执行（单表情况例外）
         @Override
         public void prepare() {
-            //实跑先不支持 权限 检验
-            //this.commonRdbmsWriterJob.privilegeValid(this.originalConfig, DATABASE_TYPE);
-            this.commonRdbmsWriterJob.prepare(this.originalConfig);
+            // 执行preSQL
+            MatrixOneWriterUtil.executeSQL(this.options, this.options.getPreSqlList());
         }
 
         @Override
         public List<Configuration> split(int mandatoryNumber) {
-            return this.commonRdbmsWriterJob.split(this.originalConfig, mandatoryNumber);
+            List<Configuration> configurations = new ArrayList<>(mandatoryNumber);
+            for (int i = 0; i < mandatoryNumber; i++) {
+                configurations.add(originalConfig);
+            }
+            return configurations;
         }
 
-        // 一般来说，是需要推迟到 task 中进行post 的执行（单表情况例外）
         @Override
         public void post() {
-            this.commonRdbmsWriterJob.post(this.originalConfig);
+            // 执行postSQL
+            MatrixOneWriterUtil.executeSQL(this.options, this.options.getPostSqlList());
         }
 
         @Override
         public void destroy() {
-            this.commonRdbmsWriterJob.destroy(this.originalConfig);
+
         }
 
     }
 
     public static class Task extends Writer.Task {
         private Configuration writerSliceConfig;
-        private CommonRdbmsWriter.Task commonRdbmsWriterTask;
+        private MatrixoneWriterOptions options;
+        private MatrixOneWriterManager matrixOneWriterManager;
+
+        private RecordSerializerUtil recordSerializerUtil;
 
         @Override
         public void init() {
             this.writerSliceConfig = super.getPluginJobConf();
-            this.commonRdbmsWriterTask = new CommonRdbmsWriter.Task(DATABASE_TYPE);
-            this.commonRdbmsWriterTask.init(this.writerSliceConfig);
+            this.options = new MatrixoneWriterOptions(this.writerSliceConfig);
+            if (options.isWildcardColumn()) {
+                Connection conn = DBUtil.getConnection(DataBaseType.MatrixOne, options.getJdbcUrl(), options.getUsername(), options.getPassword());
+                List<String> columns = MatrixOneWriterUtil.getTableColumns(conn, options.getDatabase(), options.getTable());
+                options.setInfoSchemaColumns(columns);
+            }
+            this.matrixOneWriterManager = new MatrixOneWriterManager(this.options,DATABASE_TYPE);
+            // 获取分隔符
+            this.recordSerializerUtil = new RecordSerializerUtil(MatrixOneWriterManager.COLUMN_SEPARATOR);
         }
 
         @Override
         public void prepare() {
-            this.commonRdbmsWriterTask.prepare(this.writerSliceConfig);
+
         }
 
-        //TODO 改用连接池，确保每次获取的连接都是可用的（注意：连接可能需要每次都初始化其 session）
         public void startWrite(RecordReceiver recordReceiver) {
-            this.commonRdbmsWriterTask.startWrite(recordReceiver, this.writerSliceConfig,
-                    super.getTaskPluginCollector());
+            try {
+                Record record;
+                while ((record = recordReceiver.getFromReader()) != null) {
+                    if (record.getColumnNumber() != options.getColumns().size()) {
+                        throw DataXException
+                                .asDataXException(
+                                        DBUtilErrorCode.CONF_ERROR,
+                                        String.format(
+                                                "Column configuration error. The number of reader columns %d and the number of writer columns %d are not equal.",
+                                                record.getColumnNumber(),
+                                                options.getColumns().size()));
+                    }
+                    String data = this.recordSerializerUtil.serialize(record);
+                    this.matrixOneWriterManager.writeRecord(data);
+                }
+            } catch (Exception e) {
+                throw DataXException.asDataXException(DBUtilErrorCode.WRITE_DATA_ERROR, e);
+            }
         }
 
         @Override
         public void post() {
-            this.commonRdbmsWriterTask.post(this.writerSliceConfig);
+            this.matrixOneWriterManager.close();
         }
 
         @Override
         public void destroy() {
-            this.commonRdbmsWriterTask.destroy(this.writerSliceConfig);
+
         }
 
         @Override
         public boolean supportFailOver(){
-            String writeMode = writerSliceConfig.getString(Key.WRITE_MODE);
-            return "replace".equalsIgnoreCase(writeMode);
+            return false;
         }
 
     }

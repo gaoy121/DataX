@@ -3,13 +3,16 @@
     "parameter": {
         "username": "",
         "password": "",
-        "writeMode": "",
         "column": [],
-        "session": [],
         "preSql": [],
+        "postSql": [],
+        "maxBatchRows": 60000,
+        "maxBatchSize": 5242880,
+        "flushInterval": 300000,
         "connection": [
             {
                 "jdbcUrl": "",
+                "database": "",
                 "table": []
             }
         ]
